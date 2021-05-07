@@ -1,13 +1,4 @@
-mod sample;
-mod effect;
+pub mod sample;
+pub mod effect;
 
 
-
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
