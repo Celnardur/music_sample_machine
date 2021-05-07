@@ -8,3 +8,4 @@ edition = "2018"
 
 [dependencies]
 hound = "3.4.0"
+minimp3 = "0.5.1"

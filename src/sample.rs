@@ -1,9 +1,13 @@
 use crate::Error;
+//use crate::effect::Effect;
+
 use std::error;
 use std::f32::consts::PI;
 use std::iter;
-//use crate::effect::Effect;
+use std::fs::File;
+
 use hound;
+use minimp3;
 
 const RATE: u32 = 44100;
 const BITS_PER_SAMPLE: u16 = 32;
@@ -42,7 +46,7 @@ pub trait Sample {
         writer.finalize()?;
         Ok(())
     }
-    //fn sample
+    //fn sample(&self, start: usize, end: usize) -> Box<dyn Sample> {
     //fn apply(&self, effect: &dyn Effect) -> Box<dyn Sample>;
 }
 
@@ -85,7 +89,7 @@ impl Sample for SineWave {
 
         let mut waveform = Vec::new();
         for step in 0..self.length {
-            let t = (step as f32) * 1.0 / (RATE as f32);
+            let t = (step as f32) * 1.0 / (self.sample_rate() as f32);
             waveform.push(self.amplitude * (2.0 * PI * self.frequency * t).sin())
         }
         Some(waveform)
@@ -100,6 +104,15 @@ impl Sample for SineWave {
 pub struct WaveForm {
     sample_rate: u32,
     waveform: Vec<f32>,
+}
+
+impl WaveForm {
+    pub fn from(waveform: &[f32]) -> WaveForm {
+        WaveForm {
+            sample_rate: RATE,
+            waveform: waveform.to_vec(),
+        }
+    }
 }
 
 impl Sample for WaveForm {
@@ -135,6 +148,14 @@ pub struct MultiChannel {
 }
 
 impl MultiChannel {
+    pub fn new() -> MultiChannel {
+        MultiChannel {
+            sample_rate: 0,
+            length: 0,
+            channels: Vec::new(),
+        }
+    }
+
     pub fn new_dual(left: &dyn Sample, right: &dyn Sample) -> Result<MultiChannel, Error> {
         if left.length() != right.length() {
             return Err(Error::new("Left and right sample lengths do not match"));
@@ -154,6 +175,89 @@ impl MultiChannel {
             length: left.length(),
             channels: vec![left.box_clone(), right.box_clone()],
         })
+    }
+
+    pub fn from_mp3(filename: &str) -> Result<MultiChannel, Box<dyn error::Error>> {
+        let mut waveforms: Vec<Vec<f32>> = Vec::new();
+        let mut decoder = minimp3::Decoder::new(File::open(filename)?);
+        let mut rate = 0;
+        loop {
+            match decoder.next_frame() {
+                Ok(minimp3::Frame { data, sample_rate, channels, .. }) => {
+                    if rate != 0 && sample_rate != rate {
+                        return Err(Error::new_box("Sample rate changed in file"))
+                    }
+                    rate = sample_rate;
+
+                    if waveforms.is_empty() {
+                        waveforms = iter::repeat(Vec::new()).take(channels).collect();
+                    }
+                    if waveforms.len() != channels {
+                        return Err(Error::new_box("Number of waveforms changed mid song"))
+                    }
+
+                    for (index, sample) in data.iter().enumerate() {
+                        let sample = (*sample as f32) / (i16::MAX as f32);
+                        let channel = index % waveforms.len();
+                        waveforms[channel].push(sample);
+                    }
+                },
+                Err(minimp3::Error::Eof) => break,
+                Err(e) => return Err(Box::new(e)),
+            }
+        }
+
+        let mut channels: Vec<Box<dyn Sample>> = Vec::new();
+        for wave in waveforms {
+            channels.push(Box::new(WaveForm::from(&wave)));
+        }
+
+        Ok(MultiChannel {
+            sample_rate: rate as u32,
+            length: channels[0].length(),
+            channels,
+        })
+    }
+
+    pub fn from_wav(filename: &str) -> Result<MultiChannel, Box<dyn error::Error>> {
+        let mut reader = hound::WavReader::open(filename)?;
+        let length = reader.duration() as usize;
+        let sample_rate = reader.spec().sample_rate;
+        let channels = reader.spec().channels as usize;
+        let mut waveforms: Vec<Vec<f32>> = iter::repeat(Vec::new()).take(channels).collect();
+        for (index, sample) in reader.samples::<f32>().enumerate() {
+            waveforms[index % channels].push(sample?);
+        }
+
+        let mut channels: Vec<Box<dyn Sample>> = Vec::new();
+        for wave in waveforms {
+            channels.push(Box::new(WaveForm::from(&wave)));
+        }
+
+        Ok(MultiChannel {
+            sample_rate,
+            length,
+            channels,
+        })
+    }
+
+    pub fn add_channel(&mut self, track: &dyn Sample) -> Result<(), Error> {
+        if track.channels() > 1 {
+            return Err(Error::new("Can only add single channel tracks to a multi-channel"))
+        }
+        if self.channels.len() == 0 {
+            self.sample_rate = track.sample_rate();
+            self.length = track.length();
+        } else {
+            if self.sample_rate != track.sample_rate() {
+                return Err(Error::new("Channels must have same sample rate"));
+            }
+            if self.length != track.length() {
+                return Err(Error::new("Channels must have same length"));
+            }
+        }
+        self.channels.push(track.box_clone());
+        Ok(())
     }
 }
 
@@ -237,7 +341,7 @@ impl Composition {
     }
 
     pub fn add_track_sec(&mut self, track: &dyn Sample, start: f32) -> Result<usize, Error> {
-        let start = (start * (RATE as f32)) as usize;
+        let start = (start * (self.sample_rate() as f32)) as usize;
         self.add_track(track, start)
     }
 
@@ -253,7 +357,7 @@ impl Composition {
     }
 
     pub fn add_track_id_sec(&mut self, id: usize, start: f32) -> Result<(), Error> {
-        let start = (start * (RATE as f32)) as usize;
+        let start = (start * (self.sample_rate() as f32)) as usize;
         self.add_track_id(id, start)
     }
 }
@@ -349,4 +453,19 @@ mod tests {
         comp.export("./test_files/output/switch_lr_sine.wav")?;
         Ok(())
     }
+
+    #[test]
+    fn from_mp3() -> Result<(), Box<dyn error::Error>> {
+        let song = MultiChannel::from_mp3("./test_files/songs/Chameleon.mp3")?;
+        song.export("./test_files/output/from_mp3.wav")?;
+        Ok(())
+    }
+
+    #[test]
+    fn from_wav() -> Result<(), Box<dyn error::Error>> {
+        let song = MultiChannel::from_wav("./test_files/output/switch_lr_sine.wav")?;
+        song.export("./test_files/output/from_wav.wav")?;
+        Ok(())
+    }
+    
 }
