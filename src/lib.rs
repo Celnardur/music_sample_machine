@@ -1,6 +1,5 @@
-pub mod sample;
 pub mod effect;
-
+pub mod sample;
 
 #[derive(Debug, PartialEq)]
 pub struct Error {

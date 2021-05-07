@@ -1,6 +1,7 @@
-use std::error;
 use crate::Error;
+use std::error;
 use std::f32::consts::PI;
+use std::iter;
 //use crate::effect::Effect;
 use hound;
 
@@ -12,14 +13,14 @@ pub trait Sample {
     fn length(&self) -> usize;
     fn waveform(&self, channel: u16) -> Option<Vec<f32>>;
     fn channels(&self) -> u16;
-    fn box_clone(&self) -> Box<dyn Sample>; // nesscarry for cloning 
+    fn box_clone(&self) -> Box<dyn Sample>; // nesscarry for cloning
     fn export(&self, file: &str) -> Result<(), Box<dyn error::Error>> {
         // store all the channels in a 2D vec
         let mut wave_data = Vec::new();
         for channel in 0..self.channels() {
             wave_data.push(
                 self.waveform(channel)
-                .ok_or(Error::new_box("Sample is missing a channel"))?
+                    .ok_or(Error::new_box("Sample is missing a channel"))?,
             );
         }
 
@@ -41,6 +42,7 @@ pub trait Sample {
         writer.finalize()?;
         Ok(())
     }
+    //fn sample
     //fn apply(&self, effect: &dyn Effect) -> Box<dyn Sample>;
 }
 
@@ -77,11 +79,13 @@ impl Sample for SineWave {
     }
 
     fn waveform(&self, channel: u16) -> Option<Vec<f32>> {
-        if channel > 0 { return None }
+        if channel > 0 {
+            return None;
+        }
 
         let mut waveform = Vec::new();
         for step in 0..self.length {
-            let t = (step as f32) * 1.0/(RATE as f32);
+            let t = (step as f32) * 1.0 / (RATE as f32);
             waveform.push(self.amplitude * (2.0 * PI * self.frequency * t).sin())
         }
         Some(waveform)
@@ -112,7 +116,9 @@ impl Sample for WaveForm {
     }
 
     fn waveform(&self, channel: u16) -> Option<Vec<f32>> {
-        if channel > 0 { return None }
+        if channel > 0 {
+            return None;
+        }
 
         Some(self.waveform.clone())
     }
@@ -131,20 +137,20 @@ pub struct MultiChannel {
 impl MultiChannel {
     pub fn new_dual(left: &dyn Sample, right: &dyn Sample) -> Result<MultiChannel, Error> {
         if left.length() != right.length() {
-            return Err(Error::new("Left and right sample lengths do not match"))
+            return Err(Error::new("Left and right sample lengths do not match"));
         }
         if left.sample_rate() != right.sample_rate() {
-            return Err(Error::new("Left and right sample rates do not match"))
+            return Err(Error::new("Left and right sample rates do not match"));
         }
         if left.channels() != 1 {
-            return Err(Error::new("Left channel has more than one channel"))
+            return Err(Error::new("Left channel has more than one channel"));
         }
         if right.channels() != 1 {
-            return Err(Error::new("Right channel has more than one channel"))
+            return Err(Error::new("Right channel has more than one channel"));
         }
 
         Ok(MultiChannel {
-            sample_rate: left.sample_rate(), 
+            sample_rate: left.sample_rate(),
             length: left.length(),
             channels: vec![left.box_clone(), right.box_clone()],
         })
@@ -155,7 +161,7 @@ impl Sample for MultiChannel {
     fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
-    
+
     fn length(&self) -> usize {
         self.length
     }
@@ -180,7 +186,120 @@ impl Sample for MultiChannel {
         Box::new(MultiChannel {
             sample_rate: self.sample_rate,
             length: self.length,
-            channels
+            channels,
+        })
+    }
+}
+
+pub struct Composition {
+    sample_rate: u32,
+    length: usize,
+    channels: u16,
+    tracks: Vec<Box<dyn Sample>>,
+    starts: Vec<Vec<usize>>,
+}
+
+impl Composition {
+    pub fn new() -> Composition {
+        Composition {
+            sample_rate: 0,
+            length: 0,
+            channels: 0,
+            tracks: Vec::new(),
+            starts: Vec::new(),
+        }
+    }
+
+    pub fn add_track(&mut self, track: &dyn Sample, start: usize) -> Result<usize, Error> {
+        if self.tracks.is_empty() {
+            self.sample_rate = track.sample_rate();
+            self.length = track.length() + start;
+            self.channels = track.channels();
+        } else {
+            if self.sample_rate != track.sample_rate() {
+                return Err(Error::new(
+                    "Tracks of the same composition must have the same sample rate",
+                ));
+            }
+            if self.channels != track.channels() {
+                return Err(Error::new(
+                    "Tracks of the same composition must have the same number of channels",
+                ));
+            }
+            if track.length() + start > self.length {
+                self.length = track.length() + start;
+            }
+        }
+        let id = self.tracks.len();
+        self.tracks.push(track.box_clone());
+        self.starts.push(vec![start]);
+        Ok(id)
+    }
+
+    pub fn add_track_sec(&mut self, track: &dyn Sample, start: f32) -> Result<usize, Error> {
+        let start = (start * (RATE as f32)) as usize;
+        self.add_track(track, start)
+    }
+
+    pub fn add_track_id(&mut self, id: usize, start: usize) -> Result<(), Error> {
+        if id >= self.tracks.len() {
+            return Err(Error::new("That track does not exist"));
+        }
+        if self.tracks[id].length() + start > self.length {
+            self.length = self.tracks[id].length() + start;
+        }
+        self.starts[id].push(start);
+        Ok(())
+    }
+
+    pub fn add_track_id_sec(&mut self, id: usize, start: f32) -> Result<(), Error> {
+        let start = (start * (RATE as f32)) as usize;
+        self.add_track_id(id, start)
+    }
+}
+
+impl Sample for Composition {
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    fn length(&self) -> usize {
+        self.length
+    }
+
+    fn channels(&self) -> u16 {
+        self.channels
+    }
+
+    fn waveform(&self, channel: u16) -> Option<Vec<f32>> {
+        if channel >= self.channels {
+            return None;
+        }
+
+        let mut waveform: Vec<f32> = iter::repeat(0.0).take(self.length).collect();
+        for (id, track) in self.tracks.iter().enumerate() {
+            let track = track.waveform(channel).unwrap();
+            for start in &self.starts[id] {
+                for (t, val) in track.iter().enumerate() {
+                    waveform[t + start] += val;
+                }
+            }
+        }
+        Some(waveform)
+    }
+
+    fn box_clone(&self) -> Box<dyn Sample> {
+        let mut tracks = Vec::new();
+        for track in &self.tracks {
+            tracks.push(track.box_clone())
+        }
+
+        Box::new(Composition {
+            sample_rate: self.sample_rate,
+            length: self.length,
+            channels: self.channels,
+            tracks,
+            starts: self.starts.clone(),
         })
     }
 }
@@ -190,7 +309,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sine_440_to_wav() -> Result<(), Box<dyn error::Error>>{
+    fn sine_440_to_wav() -> Result<(), Box<dyn error::Error>> {
         let wave = SineWave::new(440.0, (RATE * 5) as usize, 0.5);
         wave.export("./test_files/output/sine.wav")?;
         Ok(())
@@ -211,6 +330,23 @@ mod tests {
         let silence = SineWave::new(440.0, (RATE * 5) as usize, 0.0);
         let right = MultiChannel::new_dual(&silence, &wave)?;
         right.export("./test_files/output/right_sine.wav")?;
+        Ok(())
+    }
+
+    #[test]
+    fn switch_lr_sine() -> Result<(), Box<dyn error::Error>> {
+        let wave = SineWave::new(440.0, (RATE * 1) as usize, 0.5);
+        let silence = SineWave::new(440.0, (RATE * 1) as usize, 0.0);
+        let left = MultiChannel::new_dual(&wave, &silence)?;
+        let right = MultiChannel::new_dual(&silence, &wave)?;
+        let mut comp = Composition::new();
+        let left = comp.add_track(&left, 0)?;
+        let right = comp.add_track_sec(&right, 1.0)?;
+        comp.add_track_id_sec(left, 2.0)?;
+        comp.add_track_id_sec(right, 3.0)?;
+        comp.add_track_id_sec(left, 4.0)?;
+
+        comp.export("./test_files/output/switch_lr_sine.wav")?;
         Ok(())
     }
 }
