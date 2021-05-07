@@ -46,7 +46,18 @@ pub trait Sample {
         writer.finalize()?;
         Ok(())
     }
-    //fn sample(&self, start: usize, end: usize) -> Box<dyn Sample> {
+    fn sample(&self, start: usize, end: usize) -> Box<dyn Sample> {
+        let mut sample = MultiChannel::new();
+        for channel in 0..self.channels() {
+            sample.add_channel(&WaveForm::from(&self.waveform(channel).unwrap()[start..end])).unwrap();
+        }
+        Box::new(sample)
+    }
+    fn sample_sec(&self, start: f32, end: f32) -> Box<dyn Sample> {
+        let start = (start * (self.sample_rate() as f32)) as usize;
+        let end = (end * (self.sample_rate() as f32)) as usize;
+        self.sample(start, end)
+    }
     //fn apply(&self, effect: &dyn Effect) -> Box<dyn Sample>;
 }
 
@@ -468,4 +479,10 @@ mod tests {
         Ok(())
     }
     
+    #[test]
+    fn pick_sample() -> Result<(), Box<dyn error::Error>> {
+        let song = MultiChannel::from_mp3("./test_files/songs/Chameleon.mp3")?.sample_sec(10.0, 15.0);
+        song.export("./test_files/output/sample.wav")?;
+        Ok(())
+    }
 }
