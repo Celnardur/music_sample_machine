@@ -3,8 +3,8 @@ use crate::Error;
 
 use std::error;
 use std::f32::consts::PI;
-use std::iter;
 use std::fs::File;
+use std::iter;
 
 use hound;
 use minimp3;
@@ -49,7 +49,11 @@ pub trait Sample {
     fn sample(&self, start: usize, end: usize) -> Box<dyn Sample> {
         let mut sample = MultiChannel::new();
         for channel in 0..self.channels() {
-            sample.add_channel(&WaveForm::from(&self.waveform(channel).unwrap()[start..end])).unwrap();
+            sample
+                .add_channel(&WaveForm::from(
+                    &self.waveform(channel).unwrap()[start..end],
+                ))
+                .unwrap();
         }
         Box::new(sample)
     }
@@ -194,9 +198,14 @@ impl MultiChannel {
         let mut rate = 0;
         loop {
             match decoder.next_frame() {
-                Ok(minimp3::Frame { data, sample_rate, channels, .. }) => {
+                Ok(minimp3::Frame {
+                    data,
+                    sample_rate,
+                    channels,
+                    ..
+                }) => {
                     if rate != 0 && sample_rate != rate {
-                        return Err(Error::new_box("Sample rate changed in file"))
+                        return Err(Error::new_box("Sample rate changed in file"));
                     }
                     rate = sample_rate;
 
@@ -204,7 +213,7 @@ impl MultiChannel {
                         waveforms = iter::repeat(Vec::new()).take(channels).collect();
                     }
                     if waveforms.len() != channels {
-                        return Err(Error::new_box("Number of waveforms changed mid song"))
+                        return Err(Error::new_box("Number of waveforms changed mid song"));
                     }
 
                     for (index, sample) in data.iter().enumerate() {
@@ -212,7 +221,7 @@ impl MultiChannel {
                         let channel = index % waveforms.len();
                         waveforms[channel].push(sample);
                     }
-                },
+                }
                 Err(minimp3::Error::Eof) => break,
                 Err(e) => return Err(Box::new(e)),
             }
@@ -254,7 +263,9 @@ impl MultiChannel {
 
     pub fn add_channel(&mut self, track: &dyn Sample) -> Result<(), Error> {
         if track.channels() > 1 {
-            return Err(Error::new("Can only add single channel tracks to a multi-channel"))
+            return Err(Error::new(
+                "Can only add single channel tracks to a multi-channel",
+            ));
         }
         if self.channels.len() == 0 {
             self.sample_rate = track.sample_rate();
@@ -478,10 +489,11 @@ mod tests {
         song.export("./test_files/output/from_wav.wav")?;
         Ok(())
     }
-    
+
     #[test]
     fn pick_sample() -> Result<(), Box<dyn error::Error>> {
-        let song = MultiChannel::from_mp3("./test_files/songs/Chameleon.mp3")?.sample_sec(10.0, 15.0);
+        let song =
+            MultiChannel::from_mp3("./test_files/songs/Chameleon.mp3")?.sample_sec(10.0, 15.0);
         song.export("./test_files/output/sample.wav")?;
         Ok(())
     }
