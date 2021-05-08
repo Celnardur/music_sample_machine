@@ -478,14 +478,14 @@ mod tests {
 
     #[test]
     fn from_mp3() -> Result<(), Box<dyn error::Error>> {
-        let song = MultiChannel::from_mp3("./test_files/songs/Chameleon.mp3")?;
+        let song = MultiChannel::from_mp3("./test_files/songs/Chameleon_short.mp3")?;
         song.export("./test_files/output/from_mp3.wav")?;
         Ok(())
     }
 
     #[test]
     fn from_wav() -> Result<(), Box<dyn error::Error>> {
-        let song = MultiChannel::from_wav("./test_files/output/switch_lr_sine.wav")?;
+        let song = MultiChannel::from_wav("./test_files/songs/switch_lr_sine.wav")?;
         song.export("./test_files/output/from_wav.wav")?;
         Ok(())
     }
@@ -493,7 +493,7 @@ mod tests {
     #[test]
     fn pick_sample() -> Result<(), Box<dyn error::Error>> {
         let song =
-            MultiChannel::from_mp3("./test_files/songs/Chameleon.mp3")?.sample_sec(10.0, 15.0);
+            MultiChannel::from_mp3("./test_files/songs/Chameleon_short.mp3")?.sample_sec(10.0, 15.0);
         song.export("./test_files/output/sample.wav")?;
         Ok(())
     }
