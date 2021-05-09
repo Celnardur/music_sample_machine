@@ -430,6 +430,51 @@ impl Sample for Composition {
     }
 }
 
+pub struct Loop {
+    pub times: u16,
+    pub sample: Box<dyn Sample>,
+}
+
+impl Loop {
+    pub fn from(sample: &dyn Sample, times: u16) -> Loop {
+        Loop {
+            times,
+            sample: sample.box_clone(),
+        }
+    }
+}
+
+impl Sample for Loop {
+    fn sample_rate(&self) -> u32 {
+        self.sample.sample_rate()
+    }
+    fn length(&self) -> usize {
+        self.sample.length() * self.times as usize
+    }
+    fn waveform(&self, channel: u16) -> Option<Vec<f32>> {
+        match self.sample.waveform(channel) {
+            Some(wave) => {
+                let mut waveform = Vec::new();
+                for _ in 0..self.times {
+                    waveform.extend_from_slice(&wave);
+                }
+                Some(waveform)
+            },
+            None => None,
+        }
+    }
+    fn channels(&self) -> u16 {
+        self.sample.channels()
+    }
+    fn box_clone(&self) -> Box<dyn Sample> {
+        Box::new(Loop {
+            times: self.times,
+            sample: self.sample.box_clone(),
+        })
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,8 +538,17 @@ mod tests {
     #[test]
     fn pick_sample() -> Result<(), Box<dyn error::Error>> {
         let song =
-            MultiChannel::from_mp3("./test_files/songs/Chameleon_short.mp3")?.sample_sec(10.0, 15.0);
+            MultiChannel::from_mp3("./test_files/songs/Chameleon_short.mp3")?.sample_sec(10.8, 15.9);
         song.export("./test_files/output/sample.wav")?;
+        Ok(())
+    }
+
+    #[test]
+    fn loop_sample() -> Result<(), Box<dyn error::Error>> {
+        let beat =
+            MultiChannel::from_mp3("./test_files/songs/Chameleon_short.mp3")?.sample_sec(11.1, 16.2);
+        let backing = Loop::from(&*beat, 8);
+        backing.export("./test_files/output/loop_sample.wav")?;
         Ok(())
     }
 }
