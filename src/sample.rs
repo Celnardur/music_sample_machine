@@ -1,5 +1,5 @@
 use crate::Error;
-//use crate::effect::Effect;
+use crate::effect::Effect;
 
 use std::error;
 use std::f32::consts::PI;
@@ -62,7 +62,27 @@ pub trait Sample {
         let end = (end * (self.sample_rate() as f32)) as usize;
         self.sample(start, end)
     }
-    //fn apply(&self, effect: &dyn Effect) -> Box<dyn Sample>;
+    fn apply(&self, effect: &dyn Effect) -> Result<Box<dyn Sample>, Box<dyn error::Error>> {
+        let clone = self.box_clone();
+        effect.apply(&*clone)
+    }
+    fn scale(&self, scale: f32) -> Result<Box<dyn Sample>, Box<dyn error::Error>> {
+        // store all the channels in a 2D vec
+        let mut wave_data = Vec::new();
+        for channel in 0..self.channels() {
+            wave_data.push(
+                self.waveform(channel)
+                    .ok_or(Error::new_box("Sample is missing a channel"))?,
+            );
+        }
+
+        let mut channels = MultiChannel::new();
+        for wave in wave_data {
+            let data: Vec<_> = wave.iter().map(|s| scale*s).collect();
+            channels.add_channel(&WaveForm::from(&data))?;
+        }
+        Ok(Box::new(channels))
+    }
 }
 
 #[derive(Clone)]
